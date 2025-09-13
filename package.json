@@ -1,0 +1,17 @@
+{
+  "name": "tosijs-encrypt",
+  "module": "index.ts",
+  "type": "module",
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  },
+  "scripts": {
+    "start": "rm -rf www && bun parcel demo/index.html --dist-dir www -p 7337",
+    "pack": "bun test && bun build index.ts --outdir=dist",
+    "test": "bun test",
+    "latest": "rm -rf node_modules && bun install"
+  }
+}
