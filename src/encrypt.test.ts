@@ -1,21 +1,196 @@
-import { test, expect } from 'bun:test'
-import { generateKey, encrypt, decrypt } from './encrypt'
+import { test, expect, describe } from 'bun:test'
+import { generateKey, encrypt, decrypt, EncryptionKey } from './encrypt'
 
-test('it works', async () => {
-  const key = await generateKey()
+describe('generateKey', () => {
+  test('generates a valid key object', async () => {
+    const key = await generateKey()
 
-  console.log(key)
-  expect(key).toBeTruthy()
+    expect(key).toBeTruthy()
+    expect(key.key).toBeTruthy()
+    expect(typeof key.key).toBe('string')
+  })
 
-  const plainText = 'Mr Watson I need you'
-  console.log(plainText)
+  test('generates unique keys each time', async () => {
+    const key1 = await generateKey()
+    const key2 = await generateKey()
 
-  const encrypted = await encrypt(plainText, key)
+    expect(key1.key).not.toBe(key2.key)
+  })
 
-  expect(plainText === encrypted).toBe(false)
-  console.log(encrypted)
+  test('generates keys with correct base64 format', async () => {
+    const key = await generateKey()
 
-  const decrypted = await decrypt(encrypted, key)
-  expect(plainText === decrypted).toBe(true)
-  console.log(decrypted)
+    // Base64 should not throw when decoded
+    expect(() => atob(key.key)).not.toThrow()
+
+    // AES-256 key is 32 bytes, base64 encoded
+    const keyBytes = atob(key.key)
+    expect(keyBytes.length).toBe(32)
+  })
+
+  test('key object does not contain IV (IV is per-message)', async () => {
+    const key = await generateKey()
+
+    expect('iv' in key).toBe(false)
+  })
+})
+
+describe('encrypt', () => {
+  test('encrypts plaintext to different ciphertext', async () => {
+    const key = await generateKey()
+    const plainText = 'Hello, World!'
+    const encrypted = await encrypt(plainText, key)
+
+    expect(encrypted).toBeTruthy()
+    expect(encrypted).not.toBe(plainText)
+  })
+
+  test('produces valid base64 output', async () => {
+    const key = await generateKey()
+    const encrypted = await encrypt('test message', key)
+
+    expect(() => atob(encrypted)).not.toThrow()
+  })
+
+  test('encrypts empty string', async () => {
+    const key = await generateKey()
+    const encrypted = await encrypt('', key)
+
+    expect(encrypted).toBeTruthy()
+  })
+
+  test('encrypts unicode characters', async () => {
+    const key = await generateKey()
+    const plainText = 'Hello 🌍 世界'
+    const encrypted = await encrypt(plainText, key)
+    const decrypted = await decrypt(encrypted, key)
+
+    expect(decrypted).toBe(plainText)
+  })
+
+  test('same plaintext produces different ciphertext each time (unique IV)', async () => {
+    const key = await generateKey()
+    const plainText = 'same message'
+
+    const encrypted1 = await encrypt(plainText, key)
+    const encrypted2 = await encrypt(plainText, key)
+    const encrypted3 = await encrypt(plainText, key)
+
+    // All should be different due to unique IVs
+    expect(encrypted1).not.toBe(encrypted2)
+    expect(encrypted2).not.toBe(encrypted3)
+    expect(encrypted1).not.toBe(encrypted3)
+
+    // But all should decrypt to the same plaintext
+    expect(await decrypt(encrypted1, key)).toBe(plainText)
+    expect(await decrypt(encrypted2, key)).toBe(plainText)
+    expect(await decrypt(encrypted3, key)).toBe(plainText)
+  })
+
+  test('output contains 12-byte IV prefix', async () => {
+    const key = await generateKey()
+    const encrypted = await encrypt('test', key)
+    const decoded = atob(encrypted)
+
+    // Should be at least 12 bytes (IV) + some ciphertext
+    expect(decoded.length).toBeGreaterThan(12)
+  })
+})
+
+describe('decrypt', () => {
+  test('decrypts to original plaintext', async () => {
+    const key = await generateKey()
+    const plainText = 'Mr Watson I need you'
+    const encrypted = await encrypt(plainText, key)
+    const decrypted = await decrypt(encrypted, key)
+
+    expect(decrypted).toBe(plainText)
+  })
+
+  test('decrypts empty string', async () => {
+    const key = await generateKey()
+    const encrypted = await encrypt('', key)
+    const decrypted = await decrypt(encrypted, key)
+
+    expect(decrypted).toBe('')
+  })
+
+  test('decrypts long text', async () => {
+    const key = await generateKey()
+    const plainText = 'a'.repeat(10000)
+    const encrypted = await encrypt(plainText, key)
+    const decrypted = await decrypt(encrypted, key)
+
+    expect(decrypted).toBe(plainText)
+  })
+
+  test('fails with wrong key', async () => {
+    const key1 = await generateKey()
+    const key2 = await generateKey()
+    const encrypted = await encrypt('secret', key1)
+
+    await expect(decrypt(encrypted, key2)).rejects.toThrow()
+  })
+
+  test('fails with tampered ciphertext', async () => {
+    const key = await generateKey()
+    const encrypted = await encrypt('secret', key)
+
+    // Tamper with the ciphertext
+    const tampered = encrypted.slice(0, -4) + 'XXXX'
+
+    await expect(decrypt(tampered, key)).rejects.toThrow()
+  })
+
+  test('fails with truncated data', async () => {
+    const key = await generateKey()
+    const encrypted = await encrypt('secret', key)
+
+    // Truncate to less than IV size
+    const truncated = encrypted.slice(0, 8)
+
+    await expect(decrypt(truncated, key)).rejects.toThrow()
+  })
+})
+
+describe('round-trip', () => {
+  test('handles special characters', async () => {
+    const key = await generateKey()
+    const testCases = [
+      'simple text',
+      '12345',
+      '!@#$%^&*()',
+      'line1\nline2\ttab',
+      '"quotes" and \'apostrophes\'',
+      '<html>&amp;</html>',
+    ]
+
+    for (const plainText of testCases) {
+      const encrypted = await encrypt(plainText, key)
+      const decrypted = await decrypt(encrypted, key)
+      expect(decrypted).toBe(plainText)
+    }
+  })
+
+  test('multiple messages with same key', async () => {
+    const key = await generateKey()
+
+    // This is now safe - each encrypt() uses a unique IV
+    const messages = [
+      'First message',
+      'Second message',
+      'Third message',
+      'Fourth message',
+    ]
+
+    const encrypted = await Promise.all(
+      messages.map((msg) => encrypt(msg, key))
+    )
+
+    const decrypted = await Promise.all(
+      encrypted.map((enc) => decrypt(enc, key))
+    )
+
+    expect(decrypted).toEqual(messages)
+  })
 })

@@ -7,15 +7,39 @@
  * as the industry standard for symmetric encryption.
  */
 
+// Check for post-quantum algorithm support on module load
+;(async () => {
+  const algorithms = ['ML-KEM', 'ML-DSA', 'SLH-DSA', 'X25519Kyber768']
+  for (const algorithm of algorithms) {
+    try {
+      await crypto.subtle.generateKey(
+        { name: algorithm } as Algorithm,
+        false,
+        ['encrypt', 'decrypt']
+      )
+      console.warn(
+        `[tosijs-encrypt] Post-quantum algorithm "${algorithm}" is now available in this browser. ` +
+        `Consider updating tosijs-encrypt to a newer version with quantum-resistant encryption.`
+      )
+      return
+    } catch {
+      // Expected - algorithm not supported yet
+    }
+  }
+})()
+
 /**
- * An interface representing a key pair containing the symmetric key and a random Initialization Vector (IV).
+ * An interface representing an encryption key.
  */
-export interface CryptoKey {
-  /** The base64-encoded key. */
+export interface EncryptionKey {
+  /** The base64-encoded AES-256 key. */
   key: string
-  /** The base64-encoded Initialization Vector (IV). */
-  iv: string
 }
+
+/**
+ * @deprecated Use EncryptionKey instead. This alias exists for backward compatibility.
+ */
+export type CryptoKey = EncryptionKey
 
 /**
  * Converts a Base64 string to an ArrayBuffer.
@@ -47,10 +71,10 @@ function arrayBufferToBase64(arrayBuffer: ArrayBuffer): string {
 }
 
 /**
- * Generates a new cryptographically secure AES-GCM key and a random IV.
- * @returns A promise that resolves to a CryptoKey object containing the base64-encoded key and IV.
+ * Generates a new cryptographically secure AES-GCM key.
+ * @returns A promise that resolves to an EncryptionKey object containing the base64-encoded key.
  */
-export async function generateKey(): Promise<CryptoKey> {
+export async function generateKey(): Promise<EncryptionKey> {
   try {
     const key = await crypto.subtle.generateKey(
       { name: 'AES-GCM', length: 256 },
@@ -60,29 +84,28 @@ export async function generateKey(): Promise<CryptoKey> {
     const exportedKey = await crypto.subtle.exportKey('raw', key)
     const keyBase64 = arrayBufferToBase64(exportedKey)
 
-    const iv = crypto.getRandomValues(new Uint8Array(12))
-    const ivBase64 = arrayBufferToBase64(iv.buffer)
-
-    return { key: keyBase64, iv: ivBase64 }
-  } catch (error) {
-    console.error('Error generating key:', error)
+    return { key: keyBase64 }
+  } catch {
     throw new Error('Failed to generate cryptographic key.')
   }
 }
 
 /**
- * Encrypts a plaintext string using a provided CryptoKey.
+ * Encrypts a plaintext string using a provided EncryptionKey.
+ * A fresh random IV is generated for each encryption and prepended to the ciphertext.
  * @param plaintext The string to encrypt.
- * @param keyPair The CryptoKey object containing the base64-encoded key and IV.
- * @returns A promise that resolves to the base64-encoded ciphertext.
+ * @param encryptionKey The EncryptionKey object containing the base64-encoded key.
+ * @returns A promise that resolves to the base64-encoded IV+ciphertext.
  */
 export async function encrypt(
   plaintext: string,
-  keyPair: CryptoKey
+  encryptionKey: EncryptionKey
 ): Promise<string> {
   try {
-    const keyBuffer = base64ToArrayBuffer(keyPair.key)
-    const ivBuffer = base64ToArrayBuffer(keyPair.iv)
+    const keyBuffer = base64ToArrayBuffer(encryptionKey.key)
+
+    // Generate a fresh IV for each encryption
+    const iv = crypto.getRandomValues(new Uint8Array(12))
 
     const key = await crypto.subtle.importKey(
       'raw',
@@ -95,32 +118,40 @@ export async function encrypt(
     const plaintextBuffer = textEncoder.encode(plaintext)
 
     const ciphertextBuffer = await crypto.subtle.encrypt(
-      { name: 'AES-GCM', iv: ivBuffer },
+      { name: 'AES-GCM', iv },
       key,
       plaintextBuffer
     )
 
-    return arrayBufferToBase64(ciphertextBuffer)
-  } catch (error) {
-    console.error('Error encrypting:', error)
+    // Combine IV + ciphertext into a single buffer
+    const combined = new Uint8Array(iv.length + ciphertextBuffer.byteLength)
+    combined.set(iv, 0)
+    combined.set(new Uint8Array(ciphertextBuffer), iv.length)
+
+    return arrayBufferToBase64(combined.buffer)
+  } catch {
     throw new Error('Failed to encrypt the message.')
   }
 }
 
 /**
- * Decrypts a base64-encoded ciphertext string using a provided CryptoKey.
- * @param ciphertextBase64 The base64-encoded ciphertext to decrypt.
- * @param keyPair The CryptoKey object containing the base64-encoded key and IV.
+ * Decrypts a base64-encoded ciphertext string using a provided EncryptionKey.
+ * Extracts the IV from the first 12 bytes of the decoded data.
+ * @param ciphertextBase64 The base64-encoded IV+ciphertext to decrypt.
+ * @param encryptionKey The EncryptionKey object containing the base64-encoded key.
  * @returns A promise that resolves to the decrypted plaintext string.
  */
 export async function decrypt(
   ciphertextBase64: string,
-  keyPair: CryptoKey
+  encryptionKey: EncryptionKey
 ): Promise<string> {
   try {
-    const keyBuffer = base64ToArrayBuffer(keyPair.key)
-    const ivBuffer = base64ToArrayBuffer(keyPair.iv)
-    const ciphertextBuffer = base64ToArrayBuffer(ciphertextBase64)
+    const keyBuffer = base64ToArrayBuffer(encryptionKey.key)
+    const combined = new Uint8Array(base64ToArrayBuffer(ciphertextBase64))
+
+    // Extract IV (first 12 bytes) and ciphertext (rest)
+    const iv = combined.slice(0, 12)
+    const ciphertext = combined.slice(12)
 
     const key = await crypto.subtle.importKey(
       'raw',
@@ -131,14 +162,13 @@ export async function decrypt(
     )
     const textDecoder = new TextDecoder()
     const decryptedBuffer = await crypto.subtle.decrypt(
-      { name: 'AES-GCM', iv: ivBuffer },
+      { name: 'AES-GCM', iv },
       key,
-      ciphertextBuffer
+      ciphertext
     )
 
     return textDecoder.decode(decryptedBuffer)
-  } catch (error) {
-    console.error('Error decrypting:', error)
-    throw new Error('Failed to decrypt the message. Check the key and IV.')
+  } catch {
+    throw new Error('Failed to decrypt the message. Check the key.')
   }
 }

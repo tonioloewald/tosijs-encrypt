@@ -1,7 +1,41 @@
 {
   "name": "tosijs-encrypt",
-  "module": "index.ts",
+  "version": "1.0.0",
+  "description": "A simple, zero-dependency library for generating keys, encrypting, and decrypting strings using the Web Crypto API",
+  "author": "Tonio Loewald",
+  "license": "MIT",
   "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "keywords": [
+    "encryption",
+    "crypto",
+    "aes",
+    "aes-gcm",
+    "web-crypto",
+    "encrypt",
+    "decrypt",
+    "cryptography",
+    "security"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/tonioloewald/encrypt.git"
+  },
+  "bugs": {
+    "url": "https://github.com/tonioloewald/encrypt/issues"
+  },
+  "homepage": "https://github.com/tonioloewald/encrypt#readme",
   "devDependencies": {
     "@types/bun": "latest"
   },
@@ -9,9 +43,12 @@
     "typescript": "^5"
   },
   "scripts": {
-    "start": "rm -rf www && bun parcel demo/index.html --dist-dir www -p 7337",
-    "pack": "bun test && bun build index.ts --outdir=dist",
+    "build": "bun build index.ts --outdir=dist && tsc index.ts --declaration --emitDeclarationOnly --outDir dist",
     "test": "bun test",
+    "prepublishOnly": "bun test && bun run build",
     "latest": "rm -rf node_modules && bun install"
+  },
+  "engines": {
+    "node": ">=15.0.0"
   }
 }

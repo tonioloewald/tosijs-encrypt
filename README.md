@@ -1,38 +1,105 @@
 # tosijs-encrypt
 
-A simple library for generating keys, encrypting, and decrypting strings.
+A simple, zero-dependency library for generating keys, encrypting, and decrypting strings using the Web Crypto API.
 
-It is a thin convenient wrapper around modern browser's `crypto.subtle` encryption
-library (which is only available in an `https` context) and uses the `AES-GCM`
-algorithm. (The default will be changed to a **Quantum Resistent** algorithm when one
-becomes available in all modern browsers.)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-- [SubtleCrypto documentation](https://developer.mozilla.org/en-US/docs/Web/API/SubtleCrypto)
-- [Browser support for SubtleCrypto](https://caniuse.com/?search=SubtleCrypto)
-- [Comparing Quantum-Resistant Cryptographic Algorithms…](https://dl.acm.org/doi/10.1145/3745812.3745888)
+## Features
+
+- **Zero dependencies** - Uses only the native Web Crypto API
+- **TypeScript first** - Full type definitions included
+- **AES-256-GCM** encryption - Industry standard authenticated encryption
+- **Secure by default** - Fresh IV generated for each encryption (safe for multiple messages per key)
+- **Async/await** - Non-blocking cryptographic operations
+- **Simple API** - Just three functions: `generateKey`, `encrypt`, `decrypt`
+
+## Requirements
+
+- Modern browser with [SubtleCrypto support](https://caniuse.com/?search=SubtleCrypto) (all major browsers)
+- **HTTPS context required** - The Web Crypto API is only available in secure contexts
+- Node.js 15+ or Bun (with built-in Web Crypto support)
+
+## Installation
+
+```bash
+npm install tosijs-encrypt
+```
 
 ## Usage
 
+```typescript
+import { generateKey, encrypt, decrypt } from 'tosijs-encrypt'
+
+// Generate a key once, use it for multiple messages
+const key = await generateKey()
+
+// Encrypt multiple messages with the same key (safe!)
+const encrypted1 = await encrypt('first secret', key)
+const encrypted2 = await encrypt('second secret', key)
+
+// Decrypt
+const decrypted1 = await decrypt(encrypted1, key)
+const decrypted2 = await decrypt(encrypted2, key)
 ```
-import { generateKey } from 'tosijs-encrypt'
 
-(async () => {
-  const key = await generateKey()
-  const plainText = 'imagine this is important'
-  const encryptedText = await encrypt(plainText, key)
-  const decryptedText = await decrypt(encryptedText, key)
-})()
+## API
+
+### `generateKey(): Promise<EncryptionKey>`
+
+Generates a new cryptographically secure AES-256-GCM key.
+
+```typescript
+const key = await generateKey()
+// { key: "base64-encoded-key" }
 ```
 
-## Keys
+### `encrypt(plaintext: string, key: EncryptionKey): Promise<string>`
 
-The key is a simple object that can easily be serialized and stored.
+Encrypts a plaintext string. A fresh random IV is generated for each call and embedded in the output.
 
+```typescript
+const encrypted = await encrypt('secret message', key)
+// Returns base64-encoded (IV + ciphertext)
 ```
-export interface CryptoKey {
-  /** The base64-encoded exported raw key. */
+
+### `decrypt(ciphertext: string, key: EncryptionKey): Promise<string>`
+
+Decrypts a base64-encoded ciphertext string.
+
+```typescript
+const decrypted = await decrypt(encrypted, key)
+// Returns original plaintext
+```
+
+### `EncryptionKey` Interface
+
+The key object returned by `generateKey()` can be easily serialized and stored:
+
+```typescript
+interface EncryptionKey {
+  /** The base64-encoded AES-256 key */
   key: string
-  /** The base64-encoded Initialization Vector (IV). */
-  iv: string
 }
 ```
+
+## Security
+
+- **AES-256-GCM** provides both confidentiality and authenticity (authenticated encryption)
+- **Unique IV per message** - Each `encrypt()` call generates a fresh 12-byte IV, making it safe to encrypt multiple messages with the same key
+- **IV is not secret** - It's prepended to the ciphertext and extracted automatically during decryption
+- **Store keys securely** - Never expose keys in client-side code or version control
+- **HTTPS required** - The Web Crypto API only works in secure contexts
+
+## Future
+
+The default algorithm will be updated to a **quantum-resistant** algorithm when one becomes available in all modern browsers.
+
+## References
+
+- [SubtleCrypto documentation (MDN)](https://developer.mozilla.org/en-US/docs/Web/API/SubtleCrypto)
+- [Browser support for SubtleCrypto](https://caniuse.com/?search=SubtleCrypto)
+- [Comparing Quantum-Resistant Cryptographic Algorithms](https://dl.acm.org/doi/10.1145/3745812.3745888)
+
+## License
+
+MIT
