@@ -1,38 +1,17 @@
 /**
- * @file A simple cryptographically secure library for key generation and string encryption/decryption.
- * This library uses the Web Crypto API, which is secure for modern, non-quantum applications.
- * All functions are asynchronous to prevent blocking the main thread.
+ * @file Key generation and string encryption/decryption with AES-256-GCM, using only the
+ * Web Crypto API. All functions are asynchronous so they never block the main thread.
  *
- * Note: The Web Crypto API does not yet support quantum-resistant algorithms. AES-GCM is used here
- * as the industry standard for symmetric encryption.
+ * AES-256 is considered safe against known quantum attacks: Grover's algorithm halves its
+ * effective strength to about 128 bits. The quantum risk lies in how keys are exchanged
+ * (RSA/ECDH key wrapping), which is outside what this library does today.
  */
-
-// Check for post-quantum algorithm support on module load
-;(async () => {
-  const algorithms = ['ML-KEM', 'ML-DSA', 'SLH-DSA', 'X25519Kyber768']
-  for (const algorithm of algorithms) {
-    try {
-      await crypto.subtle.generateKey(
-        { name: algorithm } as Algorithm,
-        false,
-        ['encrypt', 'decrypt']
-      )
-      console.warn(
-        `[tosijs-encrypt] Post-quantum algorithm "${algorithm}" is now available in this browser. ` +
-        `Consider updating tosijs-encrypt to a newer version with quantum-resistant encryption.`
-      )
-      return
-    } catch {
-      // Expected - algorithm not supported yet
-    }
-  }
-})()
 
 /**
  * An interface representing an encryption key.
  */
 export interface EncryptionKey {
-  /** The base64-encoded AES-256 key. */
+  /** The base64-encoded AES-256 key (32 bytes once decoded). */
   key: string
 }
 
@@ -41,50 +20,83 @@ export interface EncryptionKey {
  */
 export type CryptoKey = EncryptionKey
 
+/** AES-256 key length in bytes. Shorter keys (AES-128/192) are rejected. */
+const KEY_BYTES = 32
+
+/** AES-GCM IV length in bytes, prepended to every ciphertext. */
+const IV_BYTES = 12
+
 /**
- * Converts a Base64 string to an ArrayBuffer.
+ * Converts a Base64 string to bytes.
  * @param base64String The Base64 encoded string.
- * @returns The resulting ArrayBuffer.
+ * @returns The decoded bytes.
  */
-function base64ToArrayBuffer(base64String: string): ArrayBuffer {
+function base64ToBytes(base64String: string): Uint8Array<ArrayBuffer> {
   const binaryString = atob(base64String)
-  const len = binaryString.length
-  const bytes = new Uint8Array(len)
-  for (let i = 0; i < len; i++) {
+  const bytes = new Uint8Array(binaryString.length)
+  for (let i = 0; i < binaryString.length; i++) {
     bytes[i] = binaryString.charCodeAt(i)
   }
-  return bytes.buffer
+  return bytes
 }
 
 /**
- * Converts an ArrayBuffer to a Base64 string.
- * @param arrayBuffer The ArrayBuffer to encode.
+ * Converts bytes to a Base64 string.
+ * @param buffer The bytes to encode.
  * @returns The resulting Base64 string.
  */
-function arrayBufferToBase64(arrayBuffer: ArrayBuffer): string {
-  const bytes = new Uint8Array(arrayBuffer)
+function bytesToBase64(buffer: ArrayBuffer | Uint8Array): string {
+  const bytes = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer)
   let binaryString = ''
-  for (let i = 0; i < bytes.length; i++) {
-    binaryString += String.fromCharCode(bytes[i])
+  for (const byte of bytes) {
+    binaryString += String.fromCharCode(byte)
   }
   return btoa(binaryString)
 }
 
 /**
- * Generates a new cryptographically secure AES-GCM key.
+ * Decodes and validates an EncryptionKey's raw bytes.
+ * Throws a descriptive error (it reveals nothing secret) rather than the generic one, so a
+ * caller passing the wrong kind of key can tell why it failed.
+ */
+function keyBytes(encryptionKey: EncryptionKey): Uint8Array<ArrayBuffer> {
+  let bytes: Uint8Array<ArrayBuffer>
+  try {
+    bytes = base64ToBytes(encryptionKey.key)
+  } catch {
+    throw new Error('Invalid key: not valid base64.')
+  }
+  if (bytes.length !== KEY_BYTES) {
+    throw new Error(
+      `Invalid key: expected ${KEY_BYTES} bytes (AES-256), got ${bytes.length}.`
+    )
+  }
+  return bytes
+}
+
+/**
+ * Imports raw key bytes as a non-extractable AES-GCM key for a single usage.
+ */
+function importKey(
+  bytes: Uint8Array<ArrayBuffer>,
+  usage: 'encrypt' | 'decrypt'
+): Promise<globalThis.CryptoKey> {
+  return crypto.subtle.importKey('raw', bytes, { name: 'AES-GCM' }, false, [usage])
+}
+
+/**
+ * Generates a new cryptographically secure AES-256-GCM key.
  * @returns A promise that resolves to an EncryptionKey object containing the base64-encoded key.
  */
 export async function generateKey(): Promise<EncryptionKey> {
   try {
     const key = await crypto.subtle.generateKey(
-      { name: 'AES-GCM', length: 256 },
-      true, // Key is exportable
+      { name: 'AES-GCM', length: KEY_BYTES * 8 },
+      true, // exportable: the caller stores the key as base64
       ['encrypt', 'decrypt']
     )
     const exportedKey = await crypto.subtle.exportKey('raw', key)
-    const keyBase64 = arrayBufferToBase64(exportedKey)
-
-    return { key: keyBase64 }
+    return { key: bytesToBase64(exportedKey) }
   } catch {
     throw new Error('Failed to generate cryptographic key.')
   }
@@ -96,39 +108,27 @@ export async function generateKey(): Promise<EncryptionKey> {
  * @param plaintext The string to encrypt.
  * @param encryptionKey The EncryptionKey object containing the base64-encoded key.
  * @returns A promise that resolves to the base64-encoded IV+ciphertext.
+ * @throws If the key is not a base64-encoded 32-byte key, or encryption fails.
  */
 export async function encrypt(
   plaintext: string,
   encryptionKey: EncryptionKey
 ): Promise<string> {
+  const rawKey = keyBytes(encryptionKey)
   try {
-    const keyBuffer = base64ToArrayBuffer(encryptionKey.key)
-
-    // Generate a fresh IV for each encryption
-    const iv = crypto.getRandomValues(new Uint8Array(12))
-
-    const key = await crypto.subtle.importKey(
-      'raw',
-      keyBuffer,
-      { name: 'AES-GCM' },
-      true,
-      ['encrypt']
-    )
-    const textEncoder = new TextEncoder()
-    const plaintextBuffer = textEncoder.encode(plaintext)
-
-    const ciphertextBuffer = await crypto.subtle.encrypt(
+    const iv = crypto.getRandomValues(new Uint8Array(IV_BYTES))
+    const key = await importKey(rawKey, 'encrypt')
+    const ciphertext = await crypto.subtle.encrypt(
       { name: 'AES-GCM', iv },
       key,
-      plaintextBuffer
+      new TextEncoder().encode(plaintext)
     )
 
-    // Combine IV + ciphertext into a single buffer
-    const combined = new Uint8Array(iv.length + ciphertextBuffer.byteLength)
+    // IV ‖ ciphertext (the ciphertext carries GCM's 16-byte auth tag at its end)
+    const combined = new Uint8Array(IV_BYTES + ciphertext.byteLength)
     combined.set(iv, 0)
-    combined.set(new Uint8Array(ciphertextBuffer), iv.length)
-
-    return arrayBufferToBase64(combined.buffer)
+    combined.set(new Uint8Array(ciphertext), IV_BYTES)
+    return bytesToBase64(combined)
   } catch {
     throw new Error('Failed to encrypt the message.')
   }
@@ -140,34 +140,22 @@ export async function encrypt(
  * @param ciphertextBase64 The base64-encoded IV+ciphertext to decrypt.
  * @param encryptionKey The EncryptionKey object containing the base64-encoded key.
  * @returns A promise that resolves to the decrypted plaintext string.
+ * @throws If the key is not a base64-encoded 32-byte key, or the ciphertext is malformed,
+ *   tampered with, or was encrypted with a different key.
  */
 export async function decrypt(
   ciphertextBase64: string,
   encryptionKey: EncryptionKey
 ): Promise<string> {
+  const rawKey = keyBytes(encryptionKey)
   try {
-    const keyBuffer = base64ToArrayBuffer(encryptionKey.key)
-    const combined = new Uint8Array(base64ToArrayBuffer(ciphertextBase64))
+    const combined = base64ToBytes(ciphertextBase64)
+    const iv = combined.slice(0, IV_BYTES)
+    const ciphertext = combined.slice(IV_BYTES)
 
-    // Extract IV (first 12 bytes) and ciphertext (rest)
-    const iv = combined.slice(0, 12)
-    const ciphertext = combined.slice(12)
-
-    const key = await crypto.subtle.importKey(
-      'raw',
-      keyBuffer,
-      { name: 'AES-GCM' },
-      true,
-      ['decrypt']
-    )
-    const textDecoder = new TextDecoder()
-    const decryptedBuffer = await crypto.subtle.decrypt(
-      { name: 'AES-GCM', iv },
-      key,
-      ciphertext
-    )
-
-    return textDecoder.decode(decryptedBuffer)
+    const key = await importKey(rawKey, 'decrypt')
+    const decrypted = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, ciphertext)
+    return new TextDecoder().decode(decrypted)
   } catch {
     throw new Error('Failed to decrypt the message. Check the key.')
   }

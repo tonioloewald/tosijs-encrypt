@@ -1,5 +1,5 @@
-import { test, expect, describe } from 'bun:test'
-import { generateKey, encrypt, decrypt, EncryptionKey } from './encrypt'
+import { test, expect, describe, spyOn } from 'bun:test'
+import { generateKey, encrypt, decrypt, type EncryptionKey } from './encrypt'
 
 describe('generateKey', () => {
   test('generates a valid key object', async () => {
@@ -192,5 +192,63 @@ describe('round-trip', () => {
     )
 
     expect(decrypted).toEqual(messages)
+  })
+})
+
+describe('key validation', () => {
+  // AES-GCM's importKey accepts 16/24/32-byte keys; anything but 32 would silently be
+  // AES-128/192, breaking the AES-256 promise (about 64-bit against Grover for AES-128).
+  const keyOf = (bytes: number): EncryptionKey => ({
+    key: btoa(String.fromCharCode(...new Uint8Array(bytes).fill(7))),
+  })
+
+  for (const bytes of [16, 24, 31, 33, 0]) {
+    test(`encrypt rejects a ${bytes}-byte key`, async () => {
+      await expect(encrypt('x', keyOf(bytes))).rejects.toThrow(
+        `Invalid key: expected 32 bytes (AES-256), got ${bytes}.`
+      )
+    })
+
+    test(`decrypt rejects a ${bytes}-byte key`, async () => {
+      const ciphertext = await encrypt('x', await generateKey())
+      await expect(decrypt(ciphertext, keyOf(bytes))).rejects.toThrow(
+        `Invalid key: expected 32 bytes (AES-256), got ${bytes}.`
+      )
+    })
+  }
+
+  test('rejects a key that is not base64', async () => {
+    await expect(encrypt('x', { key: 'not base64!' })).rejects.toThrow(
+      'Invalid key: not valid base64.'
+    )
+    await expect(decrypt('AAAA', { key: 'not base64!' })).rejects.toThrow(
+      'Invalid key: not valid base64.'
+    )
+  })
+})
+
+describe('compatibility', () => {
+  test('decrypts a ciphertext written by tosijs-encrypt 1.0.0 (wire format is base64(IV ‖ ciphertext))', async () => {
+    const key = { key: 'vAXoO4PkK3oruhCCSpK1ZZBG8lX/1N1bY7v0Oy78umM=' }
+    const ciphertext =
+      'uA++JLWe7jYga2RUe5Ljdq1Xyr68rgOVTLMyizqIuPIPNRwFlyeIys5O+QNkD5+gEwcy4kGrHZSksBnOEBdolFuLsQ3lQquWJePS'
+
+    expect(await decrypt(ciphertext, key)).toBe('written by tosijs-encrypt 1.0.0 — héllo 🌍')
+  })
+})
+
+describe('module', () => {
+  test('importing it has no side effects (no crypto calls, no console output)', async () => {
+    const generate = spyOn(crypto.subtle, 'generateKey')
+    const warn = spyOn(console, 'warn')
+    try {
+      await import(`./encrypt.ts?fresh=${Date.now()}`)
+      await new Promise((resolve) => setTimeout(resolve, 10))
+      expect(generate).not.toHaveBeenCalled()
+      expect(warn).not.toHaveBeenCalled()
+    } finally {
+      generate.mockRestore()
+      warn.mockRestore()
+    }
   })
 })

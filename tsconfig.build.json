@@ -1,0 +1,12 @@
+{
+  // Emits dist/*.d.ts for the published package (bun build emits the JS).
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "types": [],
+    "noEmit": false,
+    "declaration": true,
+    "emitDeclarationOnly": true,
+    "outDir": "dist"
+  },
+  "include": ["index.ts"]
+}

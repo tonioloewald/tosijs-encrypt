@@ -1,6 +1,6 @@
 {
   "name": "tosijs-encrypt",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "A simple, zero-dependency library for generating keys, encrypting, and decrypting strings using the Web Crypto API",
   "author": "Tonio Loewald",
   "license": "MIT",
@@ -37,18 +37,22 @@
   },
   "homepage": "https://github.com/tonioloewald/tosijs-encrypt#readme",
   "devDependencies": {
-    "@types/bun": "latest"
-  },
-  "peerDependencies": {
-    "typescript": "^5"
+    "@types/bun": "latest",
+    "typescript": "^7"
   },
   "scripts": {
-    "build": "bun build index.ts --outdir=dist && tsc index.ts --declaration --emitDeclarationOnly --outDir dist",
+    "build": "rm -rf dist && bun build index.ts --outdir=dist && tsc -p tsconfig.build.json && bun bin/sizes.ts",
+    "typecheck": "tsc --noEmit",
     "test": "bun test",
     "prepublishOnly": "bun test && bun run build",
     "latest": "rm -rf node_modules && bun install"
   },
   "engines": {
-    "node": ">=15.0.0"
+    "node": ">=20.0.0"
+  },
+  "releaseDoctor": {
+    "securityEntries": [
+      "index.ts"
+    ]
   }
 }

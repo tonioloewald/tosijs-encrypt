@@ -1,0 +1,21 @@
+# tosijs-encrypt
+
+> Zero-dependency AES-256-GCM string encryption for browsers (secure contexts), Node.js 20+ and Bun, using only the Web Crypto API.
+
+## API
+
+- `generateKey(): Promise<EncryptionKey>`: a new random 32-byte key, returned as `{ key: string }` (base64). Serializable; store it securely.
+- `encrypt(plaintext: string, key: EncryptionKey): Promise<string>`: returns base64(12-byte IV ‖ ciphertext + GCM tag). A fresh IV per call, so one key can encrypt many messages.
+- `decrypt(ciphertext: string, key: EncryptionKey): Promise<string>`: the original plaintext.
+- Errors: `Invalid key: …` when the key isn't base64 decoding to exactly 32 bytes; otherwise a generic `Failed to … ` message (tampering, truncation and a wrong key all look the same, by design).
+- `CryptoKey` is a deprecated alias of `EncryptionKey`.
+
+## Notes
+
+- Import has no side effects.
+- AES-256 is considered quantum-resistant; how keys are exchanged is the consumer's responsibility.
+
+## Links
+
+- [README](https://github.com/tonioloewald/tosijs-encrypt#readme)
+- [CHANGELOG](https://github.com/tonioloewald/tosijs-encrypt/blob/main/CHANGELOG.md)

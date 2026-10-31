@@ -9,10 +9,10 @@ Use Bun for everything (not node/npm/npx/jest/vitest/esbuild — see `.cursor/ru
 - `bun install` — install deps (`bun run latest` does a clean reinstall)
 - `bun test` — run all tests
 - `bun test src/encrypt.test.ts` / `bun test -t "pattern"` — run one file / tests matching a name
-- `bun run build` — bundles `index.ts` to `dist/` with `bun build`, then emits `.d.ts` via `tsc`
-- `prepublishOnly` runs tests then build
+- `bun run typecheck` — `tsc --noEmit` (TypeScript 7, strict incl. `noUncheckedIndexedAccess`; `lib` includes `DOM` for Web Crypto/`atob`/`TextEncoder`, `types: ["bun"]` for tests)
+- `bun run build` — wipes `dist/`, bundles `index.ts` with `bun build`, emits `.d.ts` via `tsc -p tsconfig.build.json`, then prints the gzipped size delta against `dist-sizes.json` (`bin/sizes.ts`; re-record with `bun bin/sizes.ts --record` when cutting a tag)
 
-There is no linter configured. `tsconfig.json` is strict (`noUncheckedIndexedAccess` etc.) with `noEmit`; type-check with `bunx tsc --noEmit`.
+There is no linter configured. `dist/` is gitignored (built in CI from the tag).
 
 ## Architecture
 
@@ -23,13 +23,17 @@ Public API: `generateKey()`, `encrypt(plaintext, key)`, `decrypt(ciphertext, key
 Key design points:
 - **AES-256-GCM** with a fresh random 12-byte IV per `encrypt()` call. The output format is `base64(IV || ciphertext)`; `decrypt()` slices the first 12 bytes as the IV. Changing this wire format breaks previously encrypted data.
 - Keys are stored as plain serializable objects (base64 strings) and re-imported via `crypto.subtle.importKey` on every call — no `CryptoKey` objects are cached.
-- All errors are caught and rethrown as generic messages (intentionally not leaking crypto details).
-- On module load, an IIFE probes for post-quantum algorithms (`ML-KEM`, etc.) and `console.warn`s if one is available. The README states the default algorithm will move to a quantum-resistant one once broadly supported in browsers.
-- Must run in secure contexts (HTTPS) in browsers; Node 15+ or Bun on the server.
+- Keys must decode to exactly 32 bytes (AES-256): `importKey` would otherwise silently accept 16/24-byte keys as AES-128/192. Key problems throw a specific `Invalid key: …`; everything else is caught and rethrown as a generic message (tampering, truncation and a wrong key are deliberately indistinguishable).
+- Imported keys are non-extractable; only `generateKey` creates an exportable one, to hand back as base64.
+- Importing the module has no side effects (a test enforces it).
+- A test decrypts a fixed ciphertext written by 1.0.0, pinning the wire format.
+- Must run in secure contexts (HTTPS) in browsers; Node 20+ or Bun on the server.
 
 ## Ecosystem practices
 
 This repo follows the shared practices in `../tosijs-coding-practices` (start at its `README.md`; check `practices/rollouts.md` for standing rollouts).
 
+- Work is tracked on the virta board (`virta brief`, `virta ls "project:tosijs-encrypt"`; https://virta.tosijs.net/host/#?virta.scope=tosijs-encrypt), not in a TODO.md.
+- Every release gets a `CHANGELOG.md` entry; `llms.txt` (hand-authored) changes whenever the API does.
 - Publishing goes through the shared OIDC workflow (`.github/workflows/publish.yml`, an unchanged copy of the practices template; don't edit it locally). Run `bun ../tosijs-coding-practices/tools/release-doctor.ts` before any release.
 - Not applicable: Prettier never touches markdown — this repo has no Prettier config or dependency.
