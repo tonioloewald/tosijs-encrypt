@@ -30,12 +30,12 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/tonioloewald/encrypt.git"
+    "url": "https://github.com/tonioloewald/tosijs-encrypt.git"
   },
   "bugs": {
-    "url": "https://github.com/tonioloewald/encrypt/issues"
+    "url": "https://github.com/tonioloewald/tosijs-encrypt/issues"
   },
-  "homepage": "https://github.com/tonioloewald/encrypt#readme",
+  "homepage": "https://github.com/tonioloewald/tosijs-encrypt#readme",
   "devDependencies": {
     "@types/bun": "latest"
   },
