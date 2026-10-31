@@ -1,6 +1,9 @@
 import { test, expect, describe, spyOn } from 'bun:test'
 import { generateKey, encrypt, decrypt, type EncryptionKey } from './encrypt'
 
+// Wrong key, tampering and truncation must be indistinguishable (no error oracle).
+const DECRYPT_FAILED = 'Failed to decrypt the message. Check the key.'
+
 describe('generateKey', () => {
   test('generates a valid key object', async () => {
     const key = await generateKey()
@@ -129,7 +132,7 @@ describe('decrypt', () => {
     const key2 = await generateKey()
     const encrypted = await encrypt('secret', key1)
 
-    await expect(decrypt(encrypted, key2)).rejects.toThrow()
+    await expect(decrypt(encrypted, key2)).rejects.toThrow(DECRYPT_FAILED)
   })
 
   test('fails with tampered ciphertext', async () => {
@@ -139,7 +142,7 @@ describe('decrypt', () => {
     // Tamper with the ciphertext
     const tampered = encrypted.slice(0, -4) + 'XXXX'
 
-    await expect(decrypt(tampered, key)).rejects.toThrow()
+    await expect(decrypt(tampered, key)).rejects.toThrow(DECRYPT_FAILED)
   })
 
   test('fails with truncated data', async () => {
@@ -149,7 +152,14 @@ describe('decrypt', () => {
     // Truncate to less than IV size
     const truncated = encrypted.slice(0, 8)
 
-    await expect(decrypt(truncated, key)).rejects.toThrow()
+    await expect(decrypt(truncated, key)).rejects.toThrow(DECRYPT_FAILED)
+  })
+
+  test('fails the same way for empty and IV-only ciphertext', async () => {
+    const key = await generateKey()
+
+    await expect(decrypt('', key)).rejects.toThrow(DECRYPT_FAILED)
+    await expect(decrypt(btoa('x'.repeat(12)), key)).rejects.toThrow(DECRYPT_FAILED)
   })
 })
 
@@ -208,7 +218,10 @@ describe('key validation', () => {
         `Invalid key: expected 32 bytes (AES-256), got ${bytes}.`
       )
     })
+  }
 
+  // decrypt keeps reading 1.0.0's AES-128/192 data (see the compatibility tests)
+  for (const bytes of [31, 33, 0, 8]) {
     test(`decrypt rejects a ${bytes}-byte key`, async () => {
       const ciphertext = await encrypt('x', await generateKey())
       await expect(decrypt(ciphertext, keyOf(bytes))).rejects.toThrow(
@@ -216,6 +229,29 @@ describe('key validation', () => {
       )
     })
   }
+
+  test('rejects a missing or non-string key', async () => {
+    for (const bad of [undefined, null, {}, { key: 123 }]) {
+      await expect(encrypt('x', bad as unknown as EncryptionKey)).rejects.toThrow(
+        'Invalid key: expected { key: string }.'
+      )
+      await expect(decrypt('AAAA', bad as unknown as EncryptionKey)).rejects.toThrow(
+        'Invalid key: expected { key: string }.'
+      )
+    }
+  })
+
+  test('imports keys as non-extractable', async () => {
+    const importKey = spyOn(crypto.subtle, 'importKey')
+    try {
+      const key = await generateKey()
+      await decrypt(await encrypt('x', key), key)
+      expect(importKey).toHaveBeenCalledTimes(2)
+      for (const call of importKey.mock.calls) expect(call[3]).toBe(false)
+    } finally {
+      importKey.mockRestore()
+    }
+  })
 
   test('rejects a key that is not base64', async () => {
     await expect(encrypt('x', { key: 'not base64!' })).rejects.toThrow(
@@ -235,6 +271,29 @@ describe('compatibility', () => {
 
     expect(await decrypt(ciphertext, key)).toBe('written by tosijs-encrypt 1.0.0 — héllo 🌍')
   })
+
+  // 1.0.0 accepted caller-supplied AES-128/192 keys; their data must stay readable in 1.x,
+  // while encrypt refuses to write anything new with them.
+  const legacy = [
+    {
+      bytes: 16,
+      key: { key: 'YZuiQWtm0G4oboFWljTx/w==' },
+      ciphertext: 'SyVSLCTWF+IozIiiaMaU3zF2qB1RFL5D+qLosY/Gkt/uvM7lHDA9CakT6BJdH9T4MY21crTP6xJnKQ==',
+    },
+    {
+      bytes: 24,
+      key: { key: 'XMRySCPXOiW/hBUNJLRwoWh7iYSpTbHE' },
+      ciphertext: 'g1NXgNMVWhNpIN2+cox+Gfsf4qqpa20Sy/wJzcb8VTYHdDqG0HR3lXUW8gG4KnhrmSqPJFoucvDNAA==',
+    },
+  ]
+  for (const { bytes, key, ciphertext } of legacy) {
+    test(`decrypts 1.0.0 data under a ${bytes}-byte key, but won't encrypt with one`, async () => {
+      expect(await decrypt(ciphertext, key)).toBe(`legacy AES-${bytes * 8} data from 1.0.0`)
+      await expect(encrypt('x', key)).rejects.toThrow(
+        `Invalid key: expected 32 bytes (AES-256), got ${bytes}.`
+      )
+    })
+  }
 })
 
 describe('module', () => {
@@ -250,5 +309,28 @@ describe('module', () => {
       generate.mockRestore()
       warn.mockRestore()
     }
+  })
+})
+
+describe('package', () => {
+  test('stays zero-dependency', async () => {
+    const pkg = await Bun.file(new URL('../package.json', import.meta.url)).json()
+    expect(pkg.dependencies ?? {}).toEqual({})
+    expect(pkg.peerDependencies ?? {}).toEqual({})
+  })
+
+  test('the README usage example runs as written', async () => {
+    const readme = await Bun.file(new URL('../README.md', import.meta.url)).text()
+    const usage = readme.split('## Usage')[1]?.match(/```typescript\n([\s\S]*?)```/)?.[1]
+    expect(usage).toBeTruthy()
+
+    const body = usage!.replace(/^import .*$/m, '') +
+      '\nreturn { decrypted1, decrypted2 }'
+    const AsyncFunction = Object.getPrototypeOf(async () => {}).constructor
+    const run = new AsyncFunction('generateKey', 'encrypt', 'decrypt', body)
+    expect(await run(generateKey, encrypt, decrypt)).toEqual({
+      decrypted1: 'first secret',
+      decrypted2: 'second secret',
+    })
   })
 })

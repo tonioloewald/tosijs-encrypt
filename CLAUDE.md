@@ -23,10 +23,10 @@ Public API: `generateKey()`, `encrypt(plaintext, key)`, `decrypt(ciphertext, key
 Key design points:
 - **AES-256-GCM** with a fresh random 12-byte IV per `encrypt()` call. The output format is `base64(IV || ciphertext)`; `decrypt()` slices the first 12 bytes as the IV. Changing this wire format breaks previously encrypted data.
 - Keys are stored as plain serializable objects (base64 strings) and re-imported via `crypto.subtle.importKey` on every call — no `CryptoKey` objects are cached.
-- Keys must decode to exactly 32 bytes (AES-256): `importKey` would otherwise silently accept 16/24-byte keys as AES-128/192. Key problems throw a specific `Invalid key: …`; everything else is caught and rethrown as a generic message (tampering, truncation and a wrong key are deliberately indistinguishable).
+- `encrypt` requires keys that decode to exactly 32 bytes (AES-256): `importKey` would otherwise silently accept 16/24-byte keys as AES-128/192. `decrypt` still accepts 16/24 (`LEGACY_DECRYPT_KEY_BYTES`) because 1.0.0 wrote data with them. Drop that only in 2.0.0. Key problems throw a specific `Invalid key: …`; everything else is caught and rethrown as a generic message (tampering, truncation and a wrong key are deliberately indistinguishable).
 - Imported keys are non-extractable; only `generateKey` creates an exportable one, to hand back as base64.
 - Importing the module has no side effects (a test enforces it).
-- A test decrypts a fixed ciphertext written by 1.0.0, pinning the wire format.
+- Tests decrypt fixed ciphertexts written by 1.0.0 (32-, 24- and 16-byte keys), pinning the wire format. They also execute the README Usage example and assert zero dependencies.
 - Must run in secure contexts (HTTPS) in browsers; Node 20+ or Bun on the server.
 
 ## Ecosystem practices
@@ -34,6 +34,7 @@ Key design points:
 This repo follows the shared practices in `../tosijs-coding-practices` (start at its `README.md`; check `practices/rollouts.md` for standing rollouts).
 
 - Work is tracked on the virta board (`virta brief`, `virta ls "project:tosijs-encrypt"`; https://virta.tosijs.net/host/#?virta.scope=tosijs-encrypt), not in a TODO.md.
+- Review reports live in `reviews/` (repo root). Run `/pre-release-review` before tagging.
 - Every release gets a `CHANGELOG.md` entry; `llms.txt` (hand-authored) changes whenever the API does.
 - Publishing goes through the shared OIDC workflow (`.github/workflows/publish.yml`, an unchanged copy of the practices template; don't edit it locally). Run `bun ../tosijs-coding-practices/tools/release-doctor.ts` before any release.
 - Not applicable: Prettier never touches markdown — this repo has no Prettier config or dependency.

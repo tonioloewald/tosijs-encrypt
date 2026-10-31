@@ -20,8 +20,15 @@ export interface EncryptionKey {
  */
 export type CryptoKey = EncryptionKey
 
-/** AES-256 key length in bytes. Shorter keys (AES-128/192) are rejected. */
+/** AES-256 key length in bytes. encrypt() accepts nothing else. */
 const KEY_BYTES = 32
+
+/**
+ * Key lengths decrypt() still accepts. 1.0.0 silently accepted AES-128/192 keys, so data a
+ * caller encrypted under their own short key must stay readable; nothing new is written with
+ * one. Becomes [KEY_BYTES] in 2.0.0.
+ */
+const LEGACY_DECRYPT_KEY_BYTES: readonly number[] = [16, 24, KEY_BYTES]
 
 /** AES-GCM IV length in bytes, prepended to every ciphertext. */
 const IV_BYTES = 12
@@ -59,14 +66,20 @@ function bytesToBase64(buffer: ArrayBuffer | Uint8Array): string {
  * Throws a descriptive error (it reveals nothing secret) rather than the generic one, so a
  * caller passing the wrong kind of key can tell why it failed.
  */
-function keyBytes(encryptionKey: EncryptionKey): Uint8Array<ArrayBuffer> {
+function keyBytes(
+  encryptionKey: EncryptionKey,
+  allowedLengths: readonly number[] = [KEY_BYTES]
+): Uint8Array<ArrayBuffer> {
+  if (typeof encryptionKey?.key !== 'string') {
+    throw new Error('Invalid key: expected { key: string }.')
+  }
   let bytes: Uint8Array<ArrayBuffer>
   try {
     bytes = base64ToBytes(encryptionKey.key)
   } catch {
     throw new Error('Invalid key: not valid base64.')
   }
-  if (bytes.length !== KEY_BYTES) {
+  if (!allowedLengths.includes(bytes.length)) {
     throw new Error(
       `Invalid key: expected ${KEY_BYTES} bytes (AES-256), got ${bytes.length}.`
     )
@@ -140,14 +153,16 @@ export async function encrypt(
  * @param ciphertextBase64 The base64-encoded IV+ciphertext to decrypt.
  * @param encryptionKey The EncryptionKey object containing the base64-encoded key.
  * @returns A promise that resolves to the decrypted plaintext string.
- * @throws If the key is not a base64-encoded 32-byte key, or the ciphertext is malformed,
- *   tampered with, or was encrypted with a different key.
+ * Also accepts 16- and 24-byte keys, so data encrypted under them by 1.0.0 stays readable
+ * (deprecated: re-encrypt it under a generateKey() key; 2.0.0 will accept only 32 bytes).
+ * @throws If the key is malformed, or the ciphertext is malformed, tampered with, or was
+ *   encrypted with a different key.
  */
 export async function decrypt(
   ciphertextBase64: string,
   encryptionKey: EncryptionKey
 ): Promise<string> {
-  const rawKey = keyBytes(encryptionKey)
+  const rawKey = keyBytes(encryptionKey, LEGACY_DECRYPT_KEY_BYTES)
   try {
     const combined = base64ToBytes(ciphertextBase64)
     const iv = combined.slice(0, IV_BYTES)

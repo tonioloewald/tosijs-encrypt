@@ -65,9 +65,9 @@ const encrypted = await encrypt('secret message', key)
 
 ### `decrypt(ciphertext: string, key: EncryptionKey): Promise<string>`
 
-Decrypts a base64-encoded ciphertext string. Throws `Invalid key: …` for a malformed key (as
-`encrypt` does), and a generic error if the ciphertext was tampered with, truncated, or encrypted
-with a different key.
+Decrypts a base64-encoded ciphertext string. Throws `Invalid key: …` for a malformed key, and a
+generic error if the ciphertext was tampered with, truncated, or encrypted with a different key.
+It also accepts the 16- and 24-byte keys 1.0.0 allowed (see Upgrading).
 
 ```typescript
 const decrypted = await decrypt(encrypted, key)
@@ -85,10 +85,18 @@ interface EncryptionKey {
 }
 ```
 
+## Upgrading from 1.0.0
+
+Nothing changes if your keys came from `generateKey()`. If you supplied your own 16- or 24-byte
+(AES-128/192) key, `encrypt` now rejects it, but `decrypt` still reads your existing data.
+Decrypt it and re-encrypt under a `generateKey()` key before 2.0.0, which will only accept
+32-byte keys. Node.js 20+ is now required. See the
+[CHANGELOG](https://github.com/tonioloewald/tosijs-encrypt/blob/main/CHANGELOG.md).
+
 ## Security
 
 - **AES-256-GCM** provides both confidentiality and authenticity (authenticated encryption)
-- **AES-256 only** - keys must decode to exactly 32 bytes; 16- and 24-byte keys (AES-128/192) are rejected rather than silently accepted
+- **AES-256 only** - `encrypt` requires a key that decodes to exactly 32 bytes; 16- and 24-byte keys (AES-128/192) are rejected rather than silently accepted (`decrypt` still reads data 1.0.0 wrote with them, until 2.0.0)
 - **Unique IV per message** - Each `encrypt()` call generates a fresh 12-byte IV, making it safe to encrypt multiple messages with the same key
 - **IV is not secret** - It's prepended to the ciphertext and extracted automatically during decryption
 - **Store keys securely** - Never expose keys in client-side code or version control
