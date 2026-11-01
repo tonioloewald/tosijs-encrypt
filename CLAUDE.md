@@ -29,6 +29,13 @@ Key design points:
 - Tests decrypt fixed ciphertexts written by 1.0.0 (32-, 24- and 16-byte keys), pinning the wire format. They also execute the README Usage example and assert zero dependencies.
 - Must run in secure contexts (HTTPS) in browsers; Node 20+ or Bun on the server.
 
+## Production consumer: Snowfox
+
+Snowfox uses this library in production to encrypt clients' cached data. Datasets are huge, so caching is aggressive. The key is held in the cloud and fetched only after the user authenticates. So:
+- Any change to key handling or the ciphertext format must keep existing caches readable, or degrade cleanly. For a cache, a failed decrypt can be treated as a miss and refetched, which is why format changes are low-risk there, but say so in the CHANGELOG.
+- Throughput matters (large payloads): keep encrypt/decrypt linear, and don't add per-call work beyond the key import.
+- Dependencies: zero is the default. `@noble/post-quantum` for hybrid key sharing (board #3617) is an owner-approved exception, to be removed when native X-Wing is available everywhere.
+
 ## Ecosystem practices
 
 This repo follows the shared practices in `../tosijs-coding-practices` (start at its `README.md`; check `practices/rollouts.md` for standing rollouts).
