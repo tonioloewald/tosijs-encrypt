@@ -31,9 +31,10 @@ Key design points:
 
 ## Production consumer: Snowfox
 
-Snowfox uses this library in production to encrypt clients' cached data. Datasets are huge, so caching is aggressive. The key is held in the cloud and fetched only after the user authenticates. So:
+Snowfox uses this library in production to encrypt clients' cached data in IndexedDB. Datasets are huge, so caching is aggressive. Each key is generated as needed (`generateKey()`), stored only in the cloud, never persisted on the device, and fetched only after the user authenticates. So:
 - Any change to key handling or the ciphertext format must keep existing caches readable, or degrade cleanly. For a cache, a failed decrypt can be treated as a miss and refetched, which is why format changes are low-risk there, but say so in the CHANGELOG.
 - Throughput matters (large payloads): keep encrypt/decrypt linear, and don't add per-call work beyond the key import.
+- The key only ever travels over TLS. For this flow the post-quantum exposure is the TLS key exchange, not this library. Hybrid key sharing (#3617) is for consumers that wrap keys or pass them between parties.
 - Dependencies: zero is the default. `@noble/post-quantum` for hybrid key sharing (board #3617) is an owner-approved exception, to be removed when native X-Wing is available everywhere.
 
 ## Ecosystem practices
